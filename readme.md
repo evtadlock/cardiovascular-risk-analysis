@@ -1,12 +1,12 @@
 # Cardiovascular Risk Analysis
 
-This project analyzes the UCI Cleveland Heart Disease dataset to study predictors of cardiovascular events using classification models and exploratory survival analysis.
+This project analyzes the UCI Cleveland Heart Disease dataset to study predictors of cardiovascular events using machine learning and statistical modeling.
 
 ---
 
 ## Project Overview
 
-The goal is to understand which clinical features are most associated with cardiovascular risk and evaluate model performance for prediction.
+The goal is to identify key clinical variables associated with cardiovascular risk and evaluate predictive model performance.
 
 The analysis includes:
 
@@ -20,30 +20,57 @@ The analysis includes:
 
 ---
 
+## Clinical Relevance
+
+This project demonstrates how clinical variables can be translated into interpretable risk predictions.
+
+Applications include:
+
+* Early identification of high-risk patients
+* Supporting preventative care strategies
+* Assisting clinical decision-making with data-driven insights
+
+---
+
 ## Dataset
 
 UCI Cleveland Heart Disease Dataset
 https://archive.ics.uci.edu/ml/datasets/heart+disease
 
-The dataset contains patient-level clinical variables such as:
+The dataset includes:
 
 * Age
 * Cholesterol
 * Blood pressure
 * Maximum heart rate
 * Exercise-induced angina
-* ST depression (oldpeak)
+* ST depression
 
-The outcome variable is whether a cardiovascular event is present.
+Outcome variable:
+
+* Presence of cardiovascular disease (binary)
 
 ---
 
 ## Key Results
 
 * Random Forest achieved higher AUC compared to Logistic Regression
-* Age, cholesterol, and exercise-related variables show strong association with risk
-* Feature importance highlights nonlinear relationships not captured by logistic regression
-* Confusion matrix shows improved classification balance in Random Forest
+* Age and exercise-related variables show strong association with cardiovascular risk
+* Feature importance highlights nonlinear relationships
+* Confusion matrix shows improved classification balance
+
+---
+
+## Example Outputs
+
+(Add screenshots here after upload)
+
+```
+figures/roc.png  
+figures/confusion_matrix.png  
+figures/importance.png  
+figures/km_plot.png  
+```
 
 ---
 
@@ -68,17 +95,9 @@ These results are included for methodological demonstration only.
 
 ---
 
-## How to Run
+## Requirements
 
-1. Open the `.Rmd` file in RStudio
-2. Install required packages if needed
-3. Click **Knit → HTML**
-
----
-
-## Tools Used
-
-* R
+* R (>= 4.0)
 * tidyverse
 * caret
 * randomForest
@@ -92,10 +111,11 @@ These results are included for methodological demonstration only.
 ## Author
 
 Evelyn Tadlock
-
+M.S. Data Science & Informatics
+Texas Woman’s University
 
 ---
 
 ## Notes
 
-This project focuses on model comparison, interpretability, and visualization of clinical risk factors. It is intended as a portfolio piece demonstrating applied machine learning and statistical analysis in healthcare data.
+This project focuses on model interpretability, performance evaluation, and clinical insight generation using real-world healthcare data.
