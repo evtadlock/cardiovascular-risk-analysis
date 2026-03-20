@@ -1,0 +1,512 @@
+---
+title: "Cardiovascular Data Analysis"
+author: "Evelyn Tadlock"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 11.77,
+  fig.height = 7.28
+)
+```
+
+# Overview
+
+This notebook analyzes the UCI Cleveland Heart Disease dataset. The workflow includes data cleaning, train and test splitting, logistic regression, random forest classification, confusion matrix visualization, density and bar style clinical plots, ROC comparison, variable importance, and an exploratory survival section with a Kaplan-Meier curve and a manual risk table.
+
+# Load Libraries
+
+```{r}
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(pROC)
+library(viridis)
+library(scales)
+library(survival)
+library(broom)
+library(patchwork)
+
+set.seed(123)
+```
+
+# Global Theme
+
+```{r}
+poster_theme <- function(base_size = 18) {
+  theme_classic(base_size = base_size) +
+    theme(
+      plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(size = 16, hjust = 0.5),
+      axis.title = element_text(size = 18),
+      axis.text = element_text(size = 14),
+      legend.title = element_text(size = 14),
+      legend.text = element_text(size = 12),
+      legend.position = "top",
+      plot.margin = ggplot2::margin(10, 10, 10, 10)
+    )
+}
+```
+
+# Load Dataset
+
+```{r}
+url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data"
+
+heart <- read.csv(
+  url,
+  header = FALSE,
+  stringsAsFactors = FALSE
+)
+
+colnames(heart) <- c(
+  "age", "sex", "cp", "trestbps", "chol", "fbs",
+  "restecg", "thalach", "exang", "oldpeak",
+  "slope", "ca", "thal", "cv_event"
+)
+```
+
+The dataset is loaded directly from the Cleveland heart disease repository and the outcome is named `cv_event` for clarity.
+
+# Cleaning and Type Conversion
+
+```{r}
+heart[heart == "?"] <- NA
+heart <- na.omit(heart)
+
+heart <- heart %>%
+  mutate(across(everything(), as.numeric))
+
+heart$cv_event <- ifelse(heart$cv_event > 0, 1, 0)
+
+heart <- heart %>%
+  mutate(
+    cv_event = factor(cv_event, levels = c(0, 1), labels = c("No", "Yes")),
+    sex = factor(sex, levels = c(0, 1), labels = c("Female", "Male")),
+    cp = factor(cp),
+    fbs = factor(fbs),
+    restecg = factor(restecg),
+    exang = factor(exang),
+    slope = factor(slope),
+    ca = factor(ca),
+    thal = factor(thal)
+  )
+
+cat("Cleaned dataset dimensions:\n")
+print(dim(heart))
+
+cat("\nOutcome distribution:\n")
+print(table(heart$cv_event))
+```
+
+The missing values stored as question marks are removed. The outcome is converted into a binary factor with labels `No` and `Yes`. Several clinical variables are converted into factors so that the models treat them as categorical rather than continuous measurements.
+
+# Train/Test Split
+
+```{r}
+train_index <- createDataPartition(heart$cv_event, p = 0.7, list = FALSE)
+train_data <- heart[train_index, ]
+test_data  <- heart[-train_index, ]
+
+cat("Training rows:", nrow(train_data), "\n")
+cat("Testing rows:", nrow(test_data), "\n")
+```
+
+A 70/30 split is used so the models can be trained on one portion of the data and evaluated on unseen observations.
+
+# Logistic Regression Model
+
+```{r}
+log_model <- glm(
+  cv_event ~ .,
+  data = train_data,
+  family = binomial
+)
+
+log_probs <- predict(log_model, newdata = test_data, type = "response")
+log_class <- ifelse(log_probs > 0.5, "Yes", "No")
+log_class <- factor(log_class, levels = c("No", "Yes"))
+
+log_roc <- roc(
+  response = test_data$cv_event,
+  predictor = log_probs,
+  levels = c("No", "Yes"),
+  direction = "<"
+)
+
+log_cm <- confusionMatrix(log_class, test_data$cv_event, positive = "Yes")
+
+cat("\nLogistic Regression Summary:\n")
+print(summary(log_model))
+
+cat("\nLogistic Regression Confusion Matrix:\n")
+print(log_cm)
+
+cat("\nLogistic Regression AUC:\n")
+print(auc(log_roc))
+```
+
+The logistic regression model provides a baseline for comparison. Its coefficients help explain the direction of association between predictors and cardiovascular event status, while the AUC summarizes overall discrimination.
+
+# Random Forest Model
+
+```{r}
+rf_model <- randomForest(
+  cv_event ~ .,
+  data = train_data,
+  ntree = 200,
+  importance = TRUE
+)
+
+rf_probs <- predict(rf_model, newdata = test_data, type = "prob")[, "Yes"]
+rf_class <- predict(rf_model, newdata = test_data, type = "response")
+
+rf_roc <- roc(
+  response = test_data$cv_event,
+  predictor = rf_probs,
+  levels = c("No", "Yes"),
+  direction = "<"
+)
+
+rf_cm <- confusionMatrix(rf_class, test_data$cv_event, positive = "Yes")
+
+cat("\nRandom Forest Model:\n")
+print(rf_model)
+
+cat("\nRandom Forest Confusion Matrix:\n")
+print(rf_cm)
+
+cat("\nRandom Forest AUC:\n")
+print(auc(rf_roc))
+```
+
+The random forest model can capture interactions and nonlinear patterns that logistic regression may miss. Its AUC and confusion matrix can be compared directly against the logistic model.
+
+# Random Forest Confusion Matrix Plot
+
+```{r}
+cm_rf_df <- as.data.frame(rf_cm$table)
+
+rf_cm_plot <- ggplot(cm_rf_df, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = Freq), size = 6, fontface = "bold") +
+  scale_fill_viridis(option = "D") +
+  labs(
+    title = "Random Forest Confusion Matrix",
+    subtitle = "Observed versus predicted class counts",
+    x = "Actual",
+    y = "Predicted",
+    fill = "Count"
+  ) +
+  poster_theme()
+
+print(rf_cm_plot)
+```
+
+This confusion matrix plot shows where the random forest is getting predictions right and where misclassification remains. Larger diagonal counts indicate stronger classification performance.
+
+# Mirrored Density Plot for Age
+
+```{r}
+density_plot <- ggplot(heart, aes(x = age, fill = cv_event)) +
+  geom_density(
+    data = subset(heart, cv_event == "Yes"),
+    aes(y = after_stat(density)),
+    alpha = 0.6
+  ) +
+  geom_density(
+    data = subset(heart, cv_event == "No"),
+    aes(y = -after_stat(density)),
+    alpha = 0.6
+  ) +
+  geom_hline(yintercept = 0, color = "gray40") +
+  scale_fill_viridis_d(option = "D") +
+  labs(
+    title = "Age Distribution and Cardiovascular Risk",
+    subtitle = "Older patients show higher event density",
+    x = "Age",
+    y = "Density",
+    fill = "Event"
+  ) +
+  annotate("text", x = max(heart$age) - 5, y = 0.025, label = "Event = Yes", size = 5, hjust = 1) +
+  annotate("text", x = max(heart$age) - 5, y = -0.025, label = "Event = No", size = 5, hjust = 1) +
+  poster_theme()
+
+print(density_plot)
+```
+
+This mirrored density plot compares the age distribution for patients with and without a cardiovascular event. It gives a quick visual sense of whether event cases are concentrated in older age ranges.
+
+# ROC Curve Comparison
+
+```{r}
+roc_plot <- ggplot() +
+  geom_line(
+    aes(x = 1 - log_roc$specificities, y = log_roc$sensitivities, color = "Logistic Regression"),
+    linewidth = 1.5
+  ) +
+  geom_line(
+    aes(x = 1 - rf_roc$specificities, y = rf_roc$sensitivities, color = "Random Forest"),
+    linewidth = 1.5
+  ) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  scale_color_viridis_d(option = "D") +
+  labs(
+    title = "ROC Curve Comparison",
+    subtitle = "Classification performance for cardiovascular event prediction",
+    x = "False Positive Rate",
+    y = "True Positive Rate",
+    color = "Model"
+  ) +
+  annotate(
+    "text",
+    x = 0.62,
+    y = 0.22,
+    label = paste0(
+      "Logistic AUC = ", round(as.numeric(auc(log_roc)), 3),
+      "\nRandom Forest AUC = ", round(as.numeric(auc(rf_roc)), 3)
+    ),
+    size = 5,
+    fontface = "italic",
+    hjust = 0
+  ) +
+  poster_theme()
+
+print(roc_plot)
+```
+
+The ROC plot compares model discrimination over all thresholds. A curve that stays closer to the upper-left corner indicates stronger performance.
+
+# Variable Importance Plot
+
+```{r}
+imp_df <- as.data.frame(importance(rf_model))
+imp_df$Feature <- rownames(imp_df)
+
+importance_plot <- imp_df %>%
+  arrange(desc(MeanDecreaseGini)) %>%
+  slice_head(n = 10) %>%
+  ggplot(aes(x = reorder(Feature, MeanDecreaseGini), y = MeanDecreaseGini, fill = Feature)) +
+  geom_col(width = 0.8) +
+  coord_flip() +
+  scale_fill_viridis_d(option = "D") +
+  labs(
+    title = "Top Predictors of Cardiovascular Risk",
+    subtitle = "Random Forest Variable Importance",
+    x = "Feature",
+    y = "Mean Decrease in Gini"
+  ) +
+  poster_theme() +
+  theme(legend.position = "none")
+
+print(importance_plot)
+```
+
+This bar plot ranks the most influential predictors in the random forest model. Features near the top contribute the most to splitting decisions in the ensemble.
+
+# Clinical Proportion Plot
+
+```{r}
+prop_plot <- heart %>%
+  count(exang, cv_event) %>%
+  group_by(exang) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = factor(exang), y = prop, fill = cv_event)) +
+  geom_col(position = "fill", width = 0.65) +
+  scale_fill_viridis_d(option = "D") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(
+    title = "Event Rate by Exercise-Induced Angina",
+    subtitle = "Clinical event proportions by angina status",
+    x = "Exercise-Induced Angina",
+    y = "Proportion",
+    fill = "Event"
+  ) +
+  poster_theme()
+
+print(prop_plot)
+```
+
+This proportion bar plot shows the event distribution within each exercise-induced angina category. It gives a simple clinical view of how event frequency shifts across groups.
+
+# Simulated Survival Data
+
+```{r}
+heart$time <- rexp(nrow(heart), rate = 0.01)
+heart$status <- ifelse(heart$cv_event == "Yes", 1, 0)
+```
+
+The original dataset does not include a real time-to-event variable. The survival section is included only as a demonstration using simulated follow-up times. Time-to-event data is simulated since the dataset does not contain longitudinal follow-up.
+
+# Cox Proportional Hazards Model
+
+```{r}
+cox_model <- coxph(
+  Surv(time, status) ~ age + chol + trestbps + thalach + oldpeak,
+  data = heart
+)
+
+cox_summary <- summary(cox_model)
+
+cat("\nCox Proportional Hazards Summary:\n")
+print(cox_summary)
+```
+
+The Cox model estimates how selected numeric predictors are associated with the hazard of event occurrence under the simulated time framework.
+
+# Survival Results Table
+
+```{r}
+surv_results <- data.frame(
+  Variable = rownames(cox_summary$coefficients),
+  HR = exp(cox_summary$coefficients[, "coef"]),
+  CI_Lower = cox_summary$conf.int[, "lower .95"],
+  CI_Upper = cox_summary$conf.int[, "upper .95"],
+  p_value = cox_summary$coefficients[, "Pr(>|z|)"]
+)
+
+print(surv_results)
+```
+
+The survival results table reports hazard ratios, confidence intervals, and p-values for the Cox model. Because time is simulated, these values are exploratory rather than substantive clinical evidence.
+
+# Hazard Ratio Forest Plot
+
+```{r}
+forest_df <- surv_results %>%
+  mutate(Variable = factor(Variable, levels = rev(Variable)))
+
+forest_plot <- ggplot(forest_df, aes(x = Variable, y = HR)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  coord_flip() +
+  scale_y_log10() +
+  labs(
+    title = "Hazard Ratios for Cardiovascular Risk Factors",
+    subtitle = "Cox Proportional Hazards Model",
+    x = "Variable",
+    y = "Hazard Ratio (log scale)"
+  ) +
+  poster_theme()
+
+print(forest_plot)
+```
+
+The forest plot makes it easier to compare effect sizes from the Cox model. Values above 1 indicate a higher hazard, while values below 1 indicate a lower hazard.
+
+# Kaplan-Meier Curve Data
+
+```{r}
+km_fit <- survfit(Surv(time, status) ~ cv_event, data = heart)
+km_df <- broom::tidy(km_fit)
+```
+
+The Kaplan-Meier model separates the sample by event group and estimates the survival curve for each simulated group.
+
+# Manual Risk Table Data
+
+```{r}
+risk_summary <- summary(km_fit, times = pretty(heart$time, n = 6))
+
+risk_table <- data.frame(
+  time = risk_summary$time,
+  strata = risk_summary$strata,
+  n_risk = risk_summary$n.risk
+)
+
+risk_table$strata <- factor(
+  risk_table$strata,
+  levels = c("cv_event=No", "cv_event=Yes")
+)
+
+print(risk_table)
+```
+
+The risk table stores the number of observations still at risk at selected time points.
+
+# Kaplan-Meier Survival Plot
+
+```{r}
+km_plot <- ggplot(km_df, aes(x = time, y = estimate, color = strata)) +
+  geom_step(linewidth = 1.5) +
+  scale_color_viridis_d(
+    option = "D",
+    labels = c("No Event", "Event")
+  ) +
+  labs(
+    title = "Kaplan-Meier Survival Curve",
+    subtitle = "Time-to-event comparison with risk table",
+    x = "Time",
+    y = "Survival Probability",
+    color = "Group"
+  ) +
+  poster_theme()
+
+print(km_plot)
+```
+
+This Kaplan-Meier plot shows how the estimated survival probabilities separate across the two outcome groups under the simulated time setup.
+
+# Manual Risk Table Plot
+
+```{r}
+risk_plot <- ggplot(risk_table, aes(x = time, y = strata, label = n_risk)) +
+  geom_text(size = 5, fontface = "bold") +
+  scale_y_discrete(labels = c("No Event", "Event")) +
+  labs(
+    title = "Number at Risk",
+    x = "Time",
+    y = "At Risk"
+  ) +
+  poster_theme(base_size = 12) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 11)
+  )
+
+print(risk_plot)
+```
+
+The manual risk table gives the count still under observation at each selected time point. This helps interpret how much information remains in the survival curves over time.
+
+# Combined Kaplan-Meier and Risk Table
+
+```{r}
+km_with_risk <- km_plot / risk_plot +
+  plot_layout(heights = c(3, 1))
+
+print(km_with_risk)
+```
+
+This combined view places the Kaplan-Meier survival curve above the manual risk table so both can be interpreted together.
+
+# Final Model Results Table
+
+```{r}
+model_results <- data.frame(
+  Model = c("Logistic Regression", "Random Forest"),
+  AUC = c(as.numeric(auc(log_roc)), as.numeric(auc(rf_roc)))
+)
+
+print(model_results)
+```
+
+The final comparison table summarizes the AUC for both classification models and makes the overall performance difference easy to report.
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
